@@ -21,7 +21,7 @@ import Atomics
 /// Execute the given closure and ensure we release all auto pools if needed.
 @inlinable
 internal func withAutoReleasePool<T>(_ execute: () throws -> T) rethrows -> T {
-#if os(iOS) || os(macOS) || os(tvOS) || os(watchOS)
+#if canImport(Darwin)
     return try autoreleasepool {
         try execute()
     }
@@ -105,9 +105,6 @@ internal final class SelectableEventLoop: EventLoop {
     let bufferPool: Pool<PooledBuffer>
     let msgBufferPool: Pool<PooledMsgBuffer>
 
-    // Used for UDP control messages.
-    private(set) var controlMessageStorage: UnsafeControlMessageStorage
-
     // The `_parentGroup` will always be set unless this is a thread takeover or we shut down.
     @usableFromInline
     internal var _parentGroup: Optional<MultiThreadedEventLoopGroup>
@@ -185,7 +182,6 @@ Further information:
         self.thread = thread
         self.bufferPool = Pool<PooledBuffer>(maxSize: 16)
         self.msgBufferPool = Pool<PooledMsgBuffer>(maxSize: 16)
-        self.controlMessageStorage = UnsafeControlMessageStorage.allocate(msghdrCount: Socket.writevLimitIOVectors)
         // We will process 4096 tasks per while loop.
         self.tasksCopy.reserveCapacity(4096)
         self.canBeShutdownIndividually = canBeShutdownIndividually
@@ -202,7 +198,6 @@ Further information:
                "illegal internal state on deinit: \(self.internalState)")
         assert(self.externalState == .resourcesReclaimed,
                "illegal external state on shutdown: \(self.externalState)")
-        self.controlMessageStorage.deallocate()
     }
 
     /// Is this `SelectableEventLoop` still open (ie. not shutting down or shut down)
