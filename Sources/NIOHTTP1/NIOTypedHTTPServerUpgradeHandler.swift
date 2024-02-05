@@ -11,14 +11,13 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
-@_spi(AsyncChannel) import NIOCore
+#if !canImport(Darwin) || swift(>=5.10)
+import NIOCore
 
 /// An object that implements `NIOTypedHTTPServerProtocolUpgrader` knows how to handle HTTP upgrade to
 /// a protocol on a server-side channel.
-@available(macOS 13, iOS 16, tvOS 16, watchOS 9, *)
-@_spi(AsyncChannel)
 public protocol NIOTypedHTTPServerProtocolUpgrader<UpgradeResult> {
-    associatedtype UpgradeResult
+    associatedtype UpgradeResult: Sendable
 
     /// The protocol this upgrader knows how to support.
     var supportedProtocol: String { get }
@@ -48,7 +47,6 @@ public protocol NIOTypedHTTPServerProtocolUpgrader<UpgradeResult> {
 
 /// The upgrade configuration for the ``NIOTypedHTTPServerUpgradeHandler``.
 @available(macOS 13, iOS 16, tvOS 16, watchOS 9, *)
-@_spi(AsyncChannel)
 public struct NIOTypedHTTPServerUpgradeConfiguration<UpgradeResult: Sendable> {
     /// The array of potential upgraders.
     public var upgraders: [any NIOTypedHTTPServerProtocolUpgrader<UpgradeResult>]
@@ -77,7 +75,6 @@ public struct NIOTypedHTTPServerUpgradeConfiguration<UpgradeResult: Sendable> {
 /// requests that we choose to punt on it entirely and not allow it. As it happens this is mostly fine:
 /// the odds of someone needing to upgrade midway through the lifetime of a connection are very low.
 @available(macOS 13, iOS 16, tvOS 16, watchOS 9, *)
-@_spi(AsyncChannel)
 public final class NIOTypedHTTPServerUpgradeHandler<UpgradeResult: Sendable>: ChannelInboundHandler, RemovableChannelHandler {
     public typealias InboundIn = HTTPServerRequestPart
     public typealias InboundOut = HTTPServerRequestPart
@@ -371,3 +368,4 @@ public final class NIOTypedHTTPServerUpgradeHandler<UpgradeResult: Sendable>: Ch
         }
     }
 }
+#endif

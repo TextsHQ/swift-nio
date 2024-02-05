@@ -15,8 +15,8 @@
 import XCTest
 @testable import NIOCore
 import NIOEmbedded
-@_spi(AsyncChannel) import NIOHTTP1
-@testable @_spi(AsyncChannel) import NIOWebSocket
+import NIOHTTP1
+@testable import NIOWebSocket
 
 extension EmbeddedChannel {
     func readAllInboundBuffers() throws -> ByteBuffer {
@@ -527,6 +527,8 @@ class WebSocketServerEndToEndTests: XCTestCase {
     }
 }
 
+#if !canImport(Darwin) || swift(>=5.10)
+@available(macOS 13, iOS 16, tvOS 16, watchOS 9, *)
 final class TypedWebSocketServerEndToEndTests: WebSocketServerEndToEndTests {
     override func createTestFixtures(
         upgraders: [WebSocketServerUpgraderConfiguration]
@@ -552,3 +554,4 @@ final class TypedWebSocketServerEndToEndTests: WebSocketServerEndToEndTests {
         return (loop: loop, serverChannel: serverChannel, clientChannel: clientChannel)
     }
 }
+#endif

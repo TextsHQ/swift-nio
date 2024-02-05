@@ -11,11 +11,12 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
-#if swift(>=5.9)
-@_spi(AsyncChannel) import NIOCore
-@_spi(AsyncChannel) import NIOPosix
-@_spi(AsyncChannel) import NIOHTTP1
-@_spi(AsyncChannel) import NIOWebSocket
+
+#if (!canImport(Darwin) && compiler(>=5.9)) || (canImport(Darwin) && compiler(>=5.10))
+import NIOCore
+import NIOPosix
+import NIOHTTP1
+import NIOWebSocket
 
 let websocketResponse = """
 <!DOCTYPE html>
@@ -41,7 +42,7 @@ let websocketResponse = """
 </html>
 """
 
-@available(macOS 14, *)
+@available(macOS 14, iOS 17, tvOS 17, watchOS 10, *)
 @main
 struct Server {
     /// The server's host.
@@ -82,7 +83,7 @@ struct Server {
                         },
                         upgradePipelineHandler: { (channel, _) in
                             channel.eventLoop.makeCompletedFuture {
-                                let asyncChannel = try NIOAsyncChannel<WebSocketFrame, WebSocketFrame>(synchronouslyWrapping: channel)
+                                let asyncChannel = try NIOAsyncChannel<WebSocketFrame, WebSocketFrame>(wrappingChannelSynchronously: channel)
                                 return UpgradeResult.websocket(asyncChannel)
                             }
                         }
@@ -93,7 +94,7 @@ struct Server {
                         notUpgradingCompletionHandler: { channel in
                             channel.eventLoop.makeCompletedFuture {
                                 try channel.pipeline.syncOperations.addHandler(HTTPByteBufferResponsePartHandler())
-                                let asyncChannel = try NIOAsyncChannel<HTTPServerRequestPart, HTTPPart<HTTPResponseHead, ByteBuffer>>(synchronouslyWrapping: channel)
+                                let asyncChannel = try NIOAsyncChannel<HTTPServerRequestPart, HTTPPart<HTTPResponseHead, ByteBuffer>>(wrappingChannelSynchronously: channel)
                                 return UpgradeResult.notUpgraded(asyncChannel)
                             }
                         }
@@ -114,9 +115,11 @@ struct Server {
         // the results of the group we need the group to automatically discard them; otherwise, this
         // would result in a memory leak over time.
         try await withThrowingDiscardingTaskGroup { group in
-            for try await upgradeResult in channel.inboundStream {
-                group.addTask {
-                    await self.handleUpgradeResult(upgradeResult)
+            try await channel.executeThenClose { inbound in
+                for try await upgradeResult in inbound {
+                    group.addTask {
+                        await self.handleUpgradeResult(upgradeResult)
+                    }
                 }
             }
         }
@@ -144,97 +147,101 @@ struct Server {
     }
 
     private func handleWebsocketChannel(_ channel: NIOAsyncChannel<WebSocketFrame, WebSocketFrame>) async throws {
-        try await withThrowingTaskGroup(of: Void.self) { group in
-            group.addTask {
-                for try await frame in channel.inboundStream {
-                    switch frame.opcode {
-                    case .ping:
-                        print("Received ping")
-                        var frameData = frame.data
-                        let maskingKey = frame.maskKey
+        try await channel.executeThenClose { inbound, outbound in
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                group.addTask {
+                    for try await frame in inbound {
+                        switch frame.opcode {
+                        case .ping:
+                            print("Received ping")
+                            var frameData = frame.data
+                            let maskingKey = frame.maskKey
 
-                        if let maskingKey = maskingKey {
-                            frameData.webSocketUnmask(maskingKey)
+                            if let maskingKey = maskingKey {
+                                frameData.webSocketUnmask(maskingKey)
+                            }
+
+                            let responseFrame = WebSocketFrame(fin: true, opcode: .pong, data: frameData)
+                            try await outbound.write(responseFrame)
+
+                        case .connectionClose:
+                            // This is an unsolicited close. We're going to send a response frame and
+                            // then, when we've sent it, close up shop. We should send back the close code the remote
+                            // peer sent us, unless they didn't send one at all.
+                            print("Received close")
+                            var data = frame.unmaskedData
+                            let closeDataCode = data.readSlice(length: 2) ?? ByteBuffer()
+                            let closeFrame = WebSocketFrame(fin: true, opcode: .connectionClose, data: closeDataCode)
+                            try await outbound.write(closeFrame)
+                            return
+                        case .binary, .continuation, .pong:
+                            // We ignore these frames.
+                            break
+                        default:
+                            // Unknown frames are errors.
+                            return
                         }
-
-                        let responseFrame = WebSocketFrame(fin: true, opcode: .pong, data: frameData)
-                        try await channel.outboundWriter.write(responseFrame)
-
-                    case .connectionClose:
-                        // This is an unsolicited close. We're going to send a response frame and
-                        // then, when we've sent it, close up shop. We should send back the close code the remote
-                        // peer sent us, unless they didn't send one at all.
-                        print("Received close")
-                        var data = frame.unmaskedData
-                        let closeDataCode = data.readSlice(length: 2) ?? ByteBuffer()
-                        let closeFrame = WebSocketFrame(fin: true, opcode: .connectionClose, data: closeDataCode)
-                        try await channel.outboundWriter.write(closeFrame)
-                        return
-                    case .binary, .continuation, .pong:
-                        // We ignore these frames.
-                        break
-                    default:
-                        // Unknown frames are errors.
-                        return
                     }
                 }
-            }
 
-            group.addTask {
-                // This is our main business logic where we are just sending the current time
-                // every second.
-                while true {
-                    // We can't really check for error here, but it's also not the purpose of the
-                    // example so let's not worry about it.
-                    let theTime = ContinuousClock().now
-                    var buffer = channel.channel.allocator.buffer(capacity: 12)
-                    buffer.writeString("\(theTime)")
+                group.addTask {
+                    // This is our main business logic where we are just sending the current time
+                    // every second.
+                    while true {
+                        // We can't really check for error here, but it's also not the purpose of the
+                        // example so let's not worry about it.
+                        let theTime = ContinuousClock().now
+                        var buffer = channel.channel.allocator.buffer(capacity: 12)
+                        buffer.writeString("\(theTime)")
 
-                    let frame = WebSocketFrame(fin: true, opcode: .text, data: buffer)
+                        let frame = WebSocketFrame(fin: true, opcode: .text, data: buffer)
 
-                    print("Sending time")
-                    try await channel.outboundWriter.write(frame)
-                    try await Task.sleep(for: .seconds(1))
+                        print("Sending time")
+                        try await outbound.write(frame)
+                        try await Task.sleep(for: .seconds(1))
+                    }
                 }
-            }
 
-            try await group.next()
-            group.cancelAll()
+                try await group.next()
+                group.cancelAll()
+            }
         }
     }
 
 
     private func handleHTTPChannel(_ channel: NIOAsyncChannel<HTTPServerRequestPart, HTTPPart<HTTPResponseHead, ByteBuffer>>) async throws {
-        for try await requestPart in channel.inboundStream {
-            // We're not interested in request bodies here: we're just serving up GET responses
-            // to get the client to initiate a websocket request.
-            guard case .head(let head) = requestPart else {
-                return
+        try await channel.executeThenClose { inbound, outbound in
+            for try await requestPart in inbound {
+                // We're not interested in request bodies here: we're just serving up GET responses
+                // to get the client to initiate a websocket request.
+                guard case .head(let head) = requestPart else {
+                    return
+                }
+
+                // GETs only.
+                guard case .GET = head.method else {
+                    try await self.respond405(writer: outbound)
+                    return
+                }
+
+                var headers = HTTPHeaders()
+                headers.add(name: "Content-Type", value: "text/html")
+                headers.add(name: "Content-Length", value: String(Self.responseBody.readableBytes))
+                headers.add(name: "Connection", value: "close")
+                let responseHead = HTTPResponseHead(
+                    version: .init(major: 1, minor: 1),
+                    status: .ok,
+                    headers: headers
+                )
+
+                try await outbound.write(
+                    contentsOf: [
+                        .head(responseHead),
+                        .body(Self.responseBody),
+                        .end(nil)
+                    ]
+                )
             }
-
-            // GETs only.
-            guard case .GET = head.method else {
-                try await self.respond405(writer: channel.outboundWriter)
-                return
-            }
-
-            var headers = HTTPHeaders()
-            headers.add(name: "Content-Type", value: "text/html")
-            headers.add(name: "Content-Length", value: String(Self.responseBody.readableBytes))
-            headers.add(name: "Connection", value: "close")
-            let responseHead = HTTPResponseHead(
-                version: .init(major: 1, minor: 1),
-                status: .ok,
-                headers: headers
-            )
-
-            try await channel.outboundWriter.write(
-                contentsOf: [
-                    .head(responseHead),
-                    .body(Self.responseBody),
-                    .end(nil)
-                ]
-            )
         }
     }
 

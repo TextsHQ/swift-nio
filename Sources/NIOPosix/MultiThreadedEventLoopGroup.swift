@@ -102,28 +102,25 @@ public final class MultiThreadedEventLoopGroup: EventLoopGroup {
                                                 parentGroup: MultiThreadedEventLoopGroup,
                                                 selectorFactory: @escaping () throws -> NIOPosix.Selector<NIORegistration>,
                                                 initializer: @escaping ThreadInitializer)  -> SelectableEventLoop {
-        let lock = NIOLock()
-        /* the `loopUpAndRunningGroup` is done by the calling thread when the EventLoop has been created and was written to `_loop` */
-        let loopUpAndRunningGroup = DispatchGroup()
+        let lock = ConditionLock(value: 0)
 
         /* synchronised by `lock` */
         var _loop: SelectableEventLoop! = nil
 
-        loopUpAndRunningGroup.enter()
         NIOThread.spawnAndRun(name: name, detachThread: false) { t in
             MultiThreadedEventLoopGroup.runTheLoop(thread: t,
                                                    parentGroup: parentGroup,
                                                    canEventLoopBeShutdownIndividually: false, // part of MTELG
                                                    selectorFactory: selectorFactory,
                                                    initializer: initializer) { l in
-                lock.withLock {
-                    _loop = l
-                }
-                loopUpAndRunningGroup.leave()
+                lock.lock(whenValue: 0)
+                _loop = l
+                lock.unlock(withValue: 1)
             }
         }
-        loopUpAndRunningGroup.wait()
-        return lock.withLock { _loop }
+        lock.lock(whenValue: 1)
+        defer { lock.unlock() }
+        return _loop!
     }
 
     /// Creates a `MultiThreadedEventLoopGroup` instance which uses `numberOfThreads`.
@@ -402,8 +399,36 @@ extension MultiThreadedEventLoopGroup: CustomStringConvertible {
     }
 }
 
+#if compiler(>=5.9)
+@usableFromInline
+struct ErasedUnownedJob {
+    @usableFromInline
+    let erasedJob: Any
+
+    @available(macOS 14.0, iOS 17.0, watchOS 10.0, tvOS 17.0, *)
+    init(job: UnownedJob) {
+        self.erasedJob = job
+    }
+
+    @available(macOS 14.0, iOS 17.0, watchOS 10.0, tvOS 17.0, *)
+    @inlinable
+    var unownedJob: UnownedJob {
+        // This force-cast is safe since we only store an UnownedJob
+        self.erasedJob as! UnownedJob
+    }
+}
+#endif
+
 @usableFromInline
 internal struct ScheduledTask {
+    @usableFromInline
+    enum UnderlyingTask {
+        case function(() -> Void)
+        #if compiler(>=5.9)
+        case unownedJob(ErasedUnownedJob)
+        #endif
+    }
+
     /// The id of the scheduled task.
     ///
     /// - Important: This id has two purposes. First, it is used to give this struct an identity so that we can implement ``Equatable``
@@ -411,21 +436,32 @@ internal struct ScheduledTask {
     ///     This means, the ids need to be unique for a given ``SelectableEventLoop`` and they need to be in ascending order.
     @usableFromInline
     let id: UInt64
-    let task: () -> Void
-    private let failFn: (Error) ->()
+    let task: UnderlyingTask
+    private let failFn: ((Error) ->())?
     @usableFromInline
     internal let readyTime: NIODeadline
 
     @usableFromInline
     init(id: UInt64, _ task: @escaping () -> Void, _ failFn: @escaping (Error) -> Void, _ time: NIODeadline) {
         self.id = id
-        self.task = task
+        self.task = .function(task)
         self.failFn = failFn
         self.readyTime = time
     }
 
+    #if compiler(>=5.9)
+    @available(macOS 14.0, iOS 17.0, watchOS 10.0, tvOS 17.0, *)
+    @usableFromInline
+    init(id: UInt64, job: consuming ExecutorJob, readyTime: NIODeadline) {
+        self.id = id
+        self.task = .unownedJob(.init(job: UnownedJob(job)))
+        self.readyTime = readyTime
+        self.failFn = nil
+    }
+    #endif
+
     func fail(_ error: Error) {
-        failFn(error)
+        failFn?(error)
     }
 }
 

@@ -34,6 +34,7 @@ Within this repository we have a number of products that provide different funct
 - `NIOHTTP1`. This provides a low-level HTTP/1.1 protocol implementation.
 - `NIOWebSocket`. This provides a low-level WebSocket protocol implementation.
 - `NIOTestUtils`. This provides a number of helpers for testing projects that use SwiftNIO.
+- `NIOFileSystem`. This provides `async` APIs for interacting with the file system.
 
 ### Protocol Implementations
 
@@ -60,7 +61,7 @@ Protocol | Client | Server | Repository | Module | Comment
 --- |  --- | --- | --- | --- | ---
 HTTP | ✅| ❌ | [swift-server/async-http-client](https://github.com/swift-server/async-http-client) | `AsyncHTTPClient` | SSWG community project
 gRPC | ✅| ✅ | [grpc/grpc-swift](https://github.com/grpc/grpc-swift) | `GRPC` | also offers a low-level API; SSWG community project
-APNS | ✅ | ❌ | [kylebrowning/APNSwift](https://github.com/kylebrowning/APNSwift) | `APNSwift` | SSWG community project
+APNS | ✅ | ❌ | [swift-server-community/APNSwift](https://github.com/swift-server-community/APNSwift) | `APNSwift` | SSWG community project
 PostgreSQL | ✅ | ❌ | [vapor/postgres-nio](https://github.com/vapor/postgres-nio) | `PostgresNIO` | SSWG community project
 Redis | ✅ | ❌ | [swift-server/RediStack](https://github.com/swift-server/RediStack) | `RediStack` | SSWG community project
 
@@ -160,7 +161,7 @@ In general, [`ChannelHandler`][ch]s are designed to be highly re-usable componen
 
 SwiftNIO ships with many [`ChannelHandler`][ch]s built in that provide useful functionality, such as HTTP parsing. In addition, high-performance applications will want to provide as much of their logic as possible in [`ChannelHandler`][ch]s, as it helps avoid problems with context switching.
 
-Additionally, SwiftNIO ships with a few [`Channel`][c] implementations. In particular, it ships with `ServerSocketChannel`, a [`Channel`][c] for sockets that accept inbound connections; `SocketChannel`, a [`Channel`][c] for TCP connections; and `DatagramChannel`, a [`Channel`][c] for UDP sockets. All of these are provided by the `NIOPosix` module. It also provides[`EmbeddedChannel`][ec], a [`Channel`][c] primarily used for testing, provided by the `NIOEmbedded` module.
+Additionally, SwiftNIO ships with a few [`Channel`][c] implementations. In particular, it ships with `ServerSocketChannel`, a [`Channel`][c] for sockets that accept inbound connections; `SocketChannel`, a [`Channel`][c] for TCP connections; and `DatagramChannel`, a [`Channel`][c] for UDP sockets. All of these are provided by the `NIOPosix` module. It also provides [`EmbeddedChannel`][ec], a [`Channel`][c] primarily used for testing, provided by the `NIOEmbedded` module.
 
 ##### A Note on Blocking
 
@@ -351,6 +352,19 @@ apt-get install -y git curl libatomic1 libxml2 netcat-openbsd lsof perl
 ```
 dnf install swift-lang /usr/bin/nc /usr/bin/lsof /usr/bin/shasum
 ```
+
+### Benchmarks
+
+Benchmarks for `swift-nio` are in a separate Swift Package in the `Benchmarks` subfolder of this repository.
+They use the [`package-benchmark`](https://github.com/ordo-one/package-benchmark) plugin.
+Benchmarks depends on the [`jemalloc`](https://jemalloc.net) memory allocation library, which is used by `package-benchmark` to capture memory allocation statistics.
+An installation guide can be found in the [Getting Started article](https://swiftpackageindex.com/ordo-one/package-benchmark/documentation/benchmark/gettingstarted#Installing-Prerequisites-and-Platform-Support) of `package-benchmark`.
+Afterwards you can run the benchmarks from CLI by going to the `Benchmarks` subfolder (e.g. `cd Benchmarks`) and invoking:
+```
+swift package benchmark
+```
+
+For more information please refer to `swift package benchmark --help` or the [documentation of `package-benchmark`](https://swiftpackageindex.com/ordo-one/package-benchmark/documentation/benchmark).
 
 [ch]: https://swiftpackageindex.com/apple/swift-nio/main/documentation/niocore/channelhandler
 [c]: https://swiftpackageindex.com/apple/swift-nio/main/documentation/niocore/channel

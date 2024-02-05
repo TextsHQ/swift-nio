@@ -16,7 +16,6 @@
 ///
 /// This is a unicast async sequence that allows a single iterator to be created.
 @available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
-@_spi(AsyncChannel)
 public struct NIOAsyncChannelInboundStream<Inbound: Sendable>: Sendable {
     @usableFromInline
     typealias Producer = NIOThrowingAsyncSequenceProducer<Inbound, Error, NIOAsyncSequenceProducerBackPressureStrategies.HighLowWatermark, NIOAsyncChannelInboundStreamChannelHandlerProducerDelegate>
@@ -81,7 +80,7 @@ public struct NIOAsyncChannelInboundStream<Inbound: Sendable>: Sendable {
     init<HandlerInbound: Sendable>(
         channel: Channel,
         backPressureStrategy: NIOAsyncSequenceProducerBackPressureStrategies.HighLowWatermark?,
-        closeRatchet: CloseRatchet,
+        closeOnDeinit: Bool,
         handler: NIOAsyncChannelInboundStreamChannelHandler<HandlerInbound, Inbound>
     ) throws {
         channel.eventLoop.preconditionInEventLoop()
@@ -97,6 +96,7 @@ public struct NIOAsyncChannelInboundStream<Inbound: Sendable>: Sendable {
 
         let sequence = Producer.makeSequence(
             backPressureStrategy: strategy,
+            finishOnDeinit: closeOnDeinit,
             delegate: NIOAsyncChannelInboundStreamChannelHandlerProducerDelegate(handler: handler)
         )
         handler.source = sequence.source
@@ -109,17 +109,16 @@ public struct NIOAsyncChannelInboundStream<Inbound: Sendable>: Sendable {
     static func makeWrappingHandler(
         channel: Channel,
         backPressureStrategy: NIOAsyncSequenceProducerBackPressureStrategies.HighLowWatermark?,
-        closeRatchet: CloseRatchet
+        closeOnDeinit: Bool
     ) throws -> NIOAsyncChannelInboundStream {
         let handler = NIOAsyncChannelInboundStreamChannelHandler<Inbound, Inbound>.makeHandler(
-            eventLoop: channel.eventLoop,
-            closeRatchet: closeRatchet
+            eventLoop: channel.eventLoop
         )
 
         return try .init(
             channel: channel,
             backPressureStrategy: backPressureStrategy,
-            closeRatchet: closeRatchet,
+            closeOnDeinit: closeOnDeinit,
             handler: handler
         )
     }
@@ -129,19 +128,18 @@ public struct NIOAsyncChannelInboundStream<Inbound: Sendable>: Sendable {
     static func makeTransformationHandler(
         channel: Channel,
         backPressureStrategy: NIOAsyncSequenceProducerBackPressureStrategies.HighLowWatermark?,
-        closeRatchet: CloseRatchet,
+        closeOnDeinit: Bool,
         channelReadTransformation: @Sendable @escaping (Channel) -> EventLoopFuture<Inbound>
     ) throws -> NIOAsyncChannelInboundStream {
         let handler = NIOAsyncChannelInboundStreamChannelHandler<Channel, Inbound>.makeHandlerWithTransformations(
             eventLoop: channel.eventLoop,
-            closeRatchet: closeRatchet,
             channelReadTransformation: channelReadTransformation
         )
 
         return try .init(
             channel: channel,
             backPressureStrategy: backPressureStrategy,
-            closeRatchet: closeRatchet,
+            closeOnDeinit: closeOnDeinit,
             handler: handler
         )
     }
@@ -149,10 +147,8 @@ public struct NIOAsyncChannelInboundStream<Inbound: Sendable>: Sendable {
 
 @available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
 extension NIOAsyncChannelInboundStream: AsyncSequence {
-    @_spi(AsyncChannel)
     public typealias Element = Inbound
 
-    @_spi(AsyncChannel)
     public struct AsyncIterator: AsyncIteratorProtocol {
         @usableFromInline
         enum _Backing {
@@ -172,7 +168,7 @@ extension NIOAsyncChannelInboundStream: AsyncSequence {
             }
         }
 
-        @inlinable @_spi(AsyncChannel)
+        @inlinable
         public mutating func next() async throws -> Element? {
             switch self._backing {
             case .asyncStream(var iterator):
@@ -189,7 +185,6 @@ extension NIOAsyncChannelInboundStream: AsyncSequence {
     }
 
     @inlinable
-    @_spi(AsyncChannel)
     public func makeAsyncIterator() -> AsyncIterator {
         return AsyncIterator(self._backing)
     }
